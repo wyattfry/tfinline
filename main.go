@@ -1,3 +1,4 @@
+// tfinline-mpb.go  –  docker‑compose‑style live status for `terraform apply|destroy`
 package main
 
 import (
@@ -10,24 +11,30 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 )
 
-/* ───────────────────────────────────────────── data model ─────────────── */
+/* ─────────────── Terraform JSON event ────────────────── */
 
-type Event struct {
-	Type string         `json:"type"`
-	Hook map[string]any `json:"hook"`
-	Msg  string         `json:"@message"`
+type Diagnostic struct {
+	Severity string `json:"severity"`
 }
 
-/* ───────────────────────────────────────────── entry point ────────────── */
+type Event struct {
+	Type       string                 `json:"type"`
+	Hook       map[string]interface{} `json:"hook"`
+	Message    string                 `json:"@message"`
+	Diagnostic *Diagnostic            `json:"diagnostic,omitempty"`
+}
+
+/* ─────────────── main ───────────────────────────────── */
 
 func main() {
 	args := os.Args[1:]
-	pretty := isPrettyCmd(args)
+	pretty := isApplyOrDestroy(args)
 
 	cmd := buildCmd(args, pretty)
 	stdout, err := cmd.StdoutPipe()
@@ -36,11 +43,7 @@ func main() {
 	must(cmd.Start())
 
 	if pretty {
-		rows := runPrettyUI(stdout) // returns when TF ends
-		fmt.Println()               // blank line after TUI exit
-		for _, row := range rows {  // print snapshot
-			fmt.Println(row)
-		}
+		runPretty(stdout)
 	} else {
 		passThrough(stdout)
 	}
@@ -48,10 +51,10 @@ func main() {
 	must(cmd.Wait())
 }
 
-/* ───────────────────────────────────── helpers / plumbing ─────────────── */
+/* ─────────────── helpers & plumbing ─────────────────── */
 
-func isPrettyCmd(args []string) bool {
-	return len(args) > 0 && slices.Contains([]string{"apply", "destroy"}, args[0])
+func isApplyOrDestroy(a []string) bool {
+	return len(a) > 0 && slices.Contains([]string{"apply", "destroy"}, a[0])
 }
 
 func buildCmd(args []string, pretty bool) *exec.Cmd {
@@ -61,86 +64,11 @@ func buildCmd(args []string, pretty bool) *exec.Cmd {
 	return exec.Command("terraform", args...)
 }
 
-func passThrough(rdr io.Reader) {
-	sc := bufio.NewScanner(rdr)
+func passThrough(r io.Reader) {
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		fmt.Println(sc.Text())
 	}
-}
-
-/* ────────────────────────────── pretty‑mode TUI renderer ──────────────── */
-
-func runPrettyUI(rdr io.Reader) []string {
-	app := tview.NewApplication()
-	table := tview.NewTable().SetBorders(false).SetFixed(1, 0)
-
-	bold := tcell.AttrBold
-	table.SetCell(0, 0, tview.NewTableCell("RESOURCE").SetAttributes(bold))
-	table.SetCell(0, 1, tview.NewTableCell("STATUS").SetAttributes(bold))
-	app.SetRoot(table, true)
-
-	scDone := make(chan struct{})
-
-	go func() {
-		sc := bufio.NewScanner(rdr)
-		for sc.Scan() {
-			var ev Event
-			if json.Unmarshal(sc.Bytes(), &ev) != nil || ev.Hook["resource"] == nil {
-				continue
-			}
-
-			addr, _ := ev.Hook["resource"].(map[string]any)["addr"].(string)
-			if addr == "" {
-				continue
-			}
-
-			status := strings.TrimPrefix(ev.Msg, addr+": ")
-			row := findOrAddRow(table, addr)
-
-			// colour on completion
-			if ev.Type == "apply_complete" || ev.Type == "destroy_complete" {
-				status = fmt.Sprintf("[green]%s[-:]", tview.Escape(status))
-			}
-
-			table.SetCell(row, 1, tview.NewTableCell(status))
-			app.Draw()
-		}
-		close(scDone)
-	}()
-
-	// Run blocks until app.Stop() is called (inside goroutine when stdin closes)
-	go func() {
-		<-scDone
-		app.Stop()
-	}()
-
-	_ = app.Run() // alternate screen active during this call
-
-	/* -------- collect snapshot after alternate screen restored -------- */
-	var rows []string
-	for r := 0; r < table.GetRowCount(); r++ {
-		res := table.GetCell(r, 0).Text
-		stat := stripTags(table.GetCell(r, 1).Text) // <── CHANGE
-		rows = append(rows, fmt.Sprintf("%-50s %s", res, stat))
-	}
-	return rows
-}
-
-/* ─────── tag‑stripping helper ─────── */
-var tagRe = regexp.MustCompile(`\[[^][]*]`)
-
-// stripTags removes tview colour / formatting tags like "[green]…[-:]".
-func stripTags(s string) string { return tagRe.ReplaceAllString(s, "") }
-
-func findOrAddRow(t *tview.Table, addr string) int {
-	for r := 1; r < t.GetRowCount(); r++ {
-		if t.GetCell(r, 0).Text == addr {
-			return r
-		}
-	}
-	row := t.GetRowCount()
-	t.SetCell(row, 0, tview.NewTableCell(addr))
-	return row
 }
 
 func must(err error) {
@@ -148,3 +76,95 @@ func must(err error) {
 		panic(err)
 	}
 }
+
+/* ───────────────── live status with mpb ───────────────── */
+
+func runPretty(r io.Reader) {
+	p := mpb.New(mpb.WithWidth(72), mpb.WithRefreshRate(120*time.Millisecond))
+
+	type resInfo struct {
+		bar    *mpb.Bar
+		status *string // pointer so decorator sees live updates
+	}
+	bars := map[string]*resInfo{}
+
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		var ev Event
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+			continue
+		}
+		// ignore warnings
+		if ev.Type == "diagnostic" && ev.Diagnostic != nil &&
+			ev.Diagnostic.Severity == "warning" {
+			continue
+		}
+		hook, ok := ev.Hook["resource"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		addr := hook["addr"].(string)
+		if addr == "" {
+			continue
+		}
+
+		msg := trimAddrPrefix(ev.Message, addr)
+
+		info, seen := bars[addr]
+		if !seen {
+			// create spinner bar with a dynamic “status” decorator
+			status := msg
+			info = &resInfo{status: &status}
+			info.bar = p.New(1, mpb.SpinnerStyle(),
+				mpb.PrependDecorators(decor.Name(addr+": ", decor.WCSyncWidth)),
+				mpb.AppendDecorators(
+					decor.Any(func(s decor.Statistics) string { return *info.status }, decor.WCSyncWidth),
+				),
+				mpb.BarWidth(1),
+			)
+			bars[addr] = info
+		}
+		*info.status = msg // live update decorator text
+
+		if done(msg) {
+			info.bar.SetCurrent(1) // stop spinner, mark done
+		}
+	}
+
+	// abort any left hanging (e.g., skipped by TF)
+	// for _, i := range bars {
+	// 	if i.bar.Completed() {
+	// 		i.bar.Abort(true)
+	// 	}
+	// }
+	p.Wait()
+
+	// -------- snapshot rows for scroll‑back --------
+	// var rows []string
+	// for addr, i := range bars {
+	// 	rows = append(rows, fmt.Sprintf("%-55s %s", addr, stripAnsi(*i.status)))
+	// }
+	// sort.Strings(rows)
+	// return rows
+}
+
+/* ───────────────── misc string helpers ───────────────── */
+
+func done(s string) bool {
+	ls := strings.ToLower(s)
+	return strings.Contains(ls, "complete") ||
+		strings.Contains(ls, "error") ||
+		strings.Contains(ls, "failed")
+}
+
+func trimAddrPrefix(msg, addr string) string {
+	if strings.HasPrefix(msg, addr+": ") {
+		return msg[len(addr)+2:]
+	}
+	return msg
+}
+
+// stripAnsi removes any ANSI colour codes mpb’s spinner may emit
+var ansiRe = regexp.MustCompile("\033\\[[0-9;]*m")
+
+func stripAnsi(s string) string { return ansiRe.ReplaceAllString(s, "") }
