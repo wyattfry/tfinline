@@ -76,6 +76,10 @@ func runPretty(r io.Reader) {
 			continue
 		}
 
+		if ev.Type != "apply_start" && ev.Type != "apply_complete" && ev.Type != "apply_error" {
+			continue
+		}
+
 		msg := trimAddrPrefix(ev.Message, addr)
 		info, seen := bars[addr]
 		if !seen {
