@@ -1,5 +1,7 @@
 # tfinline
 
+![Go CI](https://github.com/wyatt.fry/tfinline/actions/workflows/test.yaml/badge.svg)
+
 This is a wrapper around `terraform` to display the output of `apply` and `destroy` with in-line (instead of append) updates.
 
 ## Vanilla Terraform
@@ -25,18 +27,12 @@ Destroy complete! Resources: 4 destroyed.
 ## With `tfinline` (in-progress view)
 
 ```sh
-$ tfinline destroy
-azurerm_resource_group.four   ✅ Destruction complete after 16s
-azurerm_resource_group.one    ⠹ Refresh complete
-azurerm_resource_group.two    ⠙ Destroying...
-azurerm_resource_group.three  ✅ Destruction complete after 20s
-```
-
-## With `tfinline` (complete view)
-
-```sh
-azurerm_resource_group.four   ✅ Destruction complete after 16s
-azurerm_resource_group.one    ✅ Destruction complete after 16s
-azurerm_resource_group.two    ✅ Destruction complete after 16s
-azurerm_resource_group.three  ✅ Destruction complete after 20s
+$ tfinline apply
+azurerm_netapp_account.test                                       ✓ Creation complete after 15s
+azurerm_netapp_pool.test_secondary                                ✓ Creation complete after 1m8s
+azurerm_netapp_pool.test                                          ✓ Creation complete after 1m8s
+azurerm_linux_virtual_machine.test                                ✓ Creation complete after 52s
+azurerm_linux_virtual_machine.test_secondary                      ✓ Creation complete after 54s
+azurerm_netapp_volume_group_sap_hana.test_primary                 ✓ Creation complete after 7m3s
+azurerm_netapp_volume_group_sap_hana.test_secondary               ⠧ Creating...
 ```
