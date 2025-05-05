@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
+	"github.com/wyattfry/tfinline/event"
 	"log"
 	"os"
 	"os/exec"
@@ -27,6 +28,7 @@ type ChangeSummary struct {
 }
 
 type Event struct {
+	Level      string                 `json:"@level"`
 	Type       string                 `json:"type"`
 	Hook       map[string]interface{} `json:"hook"`
 	Message    string                 `json:"@message"`
@@ -54,7 +56,7 @@ func main() {
 	cmd.Stderr = log.Writer()
 	must(cmd.Start())
 
-	var alreadyExistingEvents []Event
+	var alreadyExistingEvents []event.Event
 
 	if pretty {
 		alreadyExistingEvents = runPretty(stdout)
