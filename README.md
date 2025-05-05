@@ -1,6 +1,6 @@
 # tfinline
 
-![Go CI](https://github.com/wyatt.fry/tfinline/actions/workflows/test.yaml/badge.svg)
+[![Go CI](https://github.com/wyattfry/tfinline/actions/workflows/test.yaml/badge.svg)](https://github.com/wyattfry/tfinline/actions/workflows/test.yaml)
 
 This is a wrapper around `terraform` to display the output of `apply` and `destroy` with in-line (instead of append) updates.
 
