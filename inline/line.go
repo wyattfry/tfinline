@@ -1,10 +1,10 @@
 package inline
 
 import (
-	"io"
-
+	"github.com/fatih/color"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
+	"io"
 )
 
 type Lines map[string]Line
@@ -28,16 +28,15 @@ func NewLine(prog *mpb.Progress, address, msg string) *Line {
 		mpb.PrependDecorators(
 			decor.Name(address, decor.WCSyncSpaceR),
 		),
-		// Replaces `mpb.BarFillerOnComplete("msg")` to handle failures
 		mpb.BarFillerMiddleware(func(filler mpb.BarFiller) mpb.BarFiller {
 			return mpb.BarFillerFunc(func(w io.Writer, st decor.Statistics) error {
 				if st.Completed {
 					switch l.Status() {
 					case StatusFailed:
-						_, err := io.WriteString(w, "✗")
+						_, err := io.WriteString(w, color.RedString("✗"))
 						return err
 					default:
-						_, err := io.WriteString(w, "✓")
+						_, err := io.WriteString(w, color.GreenString("✓"))
 						return err
 					}
 				}
@@ -60,14 +59,14 @@ func (l *Line) MarkAsInProgress(msg string) {
 }
 
 func (l *Line) MarkAsFailed(msg string) {
-	l.message = &msg
+	*l.message = color.RedString(msg)
 	l.currentStatus = StatusFailed
 	l.bar.SetCurrent(1)
 }
 
 func (l *Line) MarkAsDone(msg string) {
 	if msg != "" {
-		l.message = &msg
+		*l.message = color.GreenString(msg)
 	}
 	l.currentStatus = StatusDone
 	l.bar.SetCurrent(1)

@@ -2,30 +2,22 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"os/exec"
-	"slices"
-	"time"
-
-	"github.com/vbauerster/mpb/v8"
-	"github.com/wyattfry/tfinline/event"
-	"github.com/wyattfry/tfinline/inline"
-	"github.com/wyattfry/tfinline/util"
+	"os"
 )
 
-func isApplyOrDestroy(a []string) bool {
-	return len(a) > 0 && slices.Contains([]string{"apply", "destroy"}, a[0])
-}
-
-func buildCmd(args []string, pretty bool) *exec.Cmd {
-	if pretty {
-		args = append(args, "-auto-approve", "-json")
-	}
-	return exec.Command("terraform", args...)
-}
+//func isApplyOrDestroy(a []string) bool {
+//	return len(a) > 0 && slices.Contains([]string{"apply", "destroy"}, a[0])
+//}
+//
+//func buildCmd(args []string, pretty bool) *exec.Cmd {
+//	if pretty {
+//		args = append(args, "-auto-approve", "-json")
+//	}
+//	return exec.Command("terraform", args...)
+//}
 
 func passThrough(r io.Reader) {
 	sc := bufio.NewScanner(r)
@@ -35,50 +27,75 @@ func passThrough(r io.Reader) {
 	}
 }
 
-func must(err error) {
-	if err != nil {
-		fmt.Println("Encountered an error, stopping.", err)
-		log.Println(err)
-		panic(err)
+//
+//func must(err error) {
+//	if err != nil {
+//		fmt.Println("Encountered an error, stopping.", err)
+//		log.Println(err)
+//		panic(err)
+//	}
+//}
+
+//
+//func runPretty(r io.Reader, cmd *exec.Cmd) []event.Event {
+//	p := mpb.New(mpb.WithWidth(72), mpb.WithRefreshRate(120*time.Millisecond))
+//	alreadyExistsEvents := make([]event.Event, 0)
+//
+//	//type resInfo struct {
+//	//	bar    *mpb.Bar
+//	//	status *string // pointer so decorator sees live updates
+//	//}
+//	bars := map[string]*inline.Line{}
+//
+//	sc := bufio.NewScanner(r)
+//	for sc.Scan() {
+//
+//		log.Println(sc.Text())
+//		var ev event.Event
+//		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+//			continue
+//		}
+//		log.Printf("HANDLING NEW Event: %+v\n", ev)
+//		address := ev.GetAddress()
+//
+//		msg := util.TrimAddrPrefix(ev.Message, address)
+//		if _, seen := bars[address]; !seen {
+//			bars[address] = inline.NewLine(p, address, msg)
+//		}
+//
+//		if exists, skip := ev.Handle(address, msg, bars); skip {
+//			if exists != nil {
+//				alreadyExistsEvents = append(alreadyExistsEvents, *exists)
+//			}
+//			continue
+//		}
+//		// if cmd has exited, mark all bars as done. Otherwise, keep iterating
+//		log.Printf("PROCESS ID: %d", cmd.Process.Pid)
+//		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+//			for _, bar := range bars {
+//				bar.MarkAsDone(msg)
+//			}
+//			break
+//		}
+//	}
+//
+//	p.Wait()
+//
+//	return alreadyExistsEvents
+//}
+
+func setupLogging() *os.File {
+	val, ok := os.LookupEnv("TFINLINE_LOG_FILE")
+	var logFile *os.File
+	if ok {
+		logFile, err := os.OpenFile(val, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatalf("Error opening log file: %v", err)
+		}
+		log.SetOutput(logFile)
 	}
-}
 
-func runPretty(r io.Reader) []event.Event {
-	p := mpb.New(mpb.WithWidth(72), mpb.WithRefreshRate(120*time.Millisecond))
-	alreadyExistsEvents := make([]event.Event, 0)
-
-	//type resInfo struct {
-	//	bar    *mpb.Bar
-	//	status *string // pointer so decorator sees live updates
-	//}
-	bars := map[string]*inline.Line{}
-
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		log.Println(sc.Text())
-		var ev event.Event
-		if json.Unmarshal(sc.Bytes(), &ev) != nil {
-			continue
-		}
-		log.Printf("HANDLING NEW Event: %+v\n", ev)
-		address := ev.FindAddress()
-
-		msg := util.TrimAddrPrefix(ev.Message, address)
-		if _, seen := bars[address]; !seen {
-			bars[address] = inline.NewLine(p, address, msg)
-		}
-
-		if exists, skip := ev.Handle(address, msg, bars); skip {
-			if exists != nil {
-				alreadyExistsEvents = append(alreadyExistsEvents, *exists)
-			}
-			continue
-		}
-	}
-
-	p.Wait()
-
-	return alreadyExistsEvents
+	return logFile
 }
 
 //// ignore warnings

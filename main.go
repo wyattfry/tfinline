@@ -1,15 +1,16 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"flag"
 	"fmt"
-	"github.com/vbauerster/mpb/v8"
-	"github.com/vbauerster/mpb/v8/decor"
-	"github.com/wyattfry/tfinline/event"
+	"github.com/wyattfry/tfinline/inline"
+	"io"
 	"log"
 	"os"
 	"os/exec"
-	"regexp"
-	"time"
+	"sync"
 )
 
 type Diagnostic struct {
@@ -18,7 +19,6 @@ type Diagnostic struct {
 	Detail   string `json:"detail"`
 }
 
-// "changes":{"add":0,"change":0,"import":0,"remove":3,"operation":"plan"}
 type ChangeSummary struct {
 	Add       int    `json:"add"`
 	Change    int    `json:"change"`
@@ -37,91 +37,67 @@ type Event struct {
 }
 
 func main() {
-	logFile, err := os.OpenFile(".tfinline.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalf("Error opening log file: %v", err)
-	}
+	logFile := setupLogging()
 	defer logFile.Close()
 
-	log.SetOutput(logFile)
 	log.Println("tfinline started")
 
+	var tfSubCmd string
+	var importArgs string
+
+	flag.StringVar(&tfSubCmd, "cmd", "apply", "terraform command (apply|plan|destroy|init)")
+	flag.StringVar(&importArgs, "import", "", "run terraform import (pass full import arguments)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "\nEnvironment Variables:")
+		fmt.Fprintln(os.Stderr, "  TFINLINE_LOG_FILE  Optional Path to the log file for tfinline")
+	}
+	flag.Parse()
+
 	args := os.Args[1:]
-	pretty := isApplyOrDestroy(args)
 
-	cmd := buildCmd(args, pretty)
-	stdout, err := cmd.StdoutPipe()
-	must(err)
-	// cmd.Stderr = os.Stderr
-	cmd.Stderr = log.Writer()
-	must(cmd.Start())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	var alreadyExistingEvents []event.Event
+	args = append(args, "-json")
 
-	if pretty {
-		alreadyExistingEvents = runPretty(stdout)
+	cmd := exec.CommandContext(ctx, "terraform", args...)
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return
 	} else {
-		passThrough(stdout)
+		fmt.Println("Refreshing State...")
 	}
 
-	if err := cmd.Wait(); err != nil {
-		log.Printf("Command finished with error: %v\n", err)
-		if len(alreadyExistingEvents) > 0 {
-			log.Println("Importing resources that already exist:")
-			fmt.Println("### Importing resources that already exist ###")
-			p := mpb.New(mpb.WithWidth(72), mpb.WithRefreshRate(120*time.Millisecond))
-			type resInfo struct {
-				bar    *mpb.Bar
-				status *string // pointer so decorator sees live updates
-			}
-			bars := map[string]*resInfo{}
+	lines := make(chan string, 128)
+	done := make(chan struct{}) // signals view is finished
 
-			// Initialize progress bars for each resource address
-			for _, ev := range alreadyExistingEvents {
-				address := ev.Diagnostic.Address
-				status := "Importing"
-				info := &resInfo{status: &status}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go pipeToChan(&wg, stdout, lines)
+	go pipeToChan(&wg, stderr, lines)
 
-				info.bar = p.New(1, mpb.SpinnerStyle(),
-					mpb.PrependDecorators(
-						decor.Name(address, decor.WCSyncSpaceR),
-					),
-					mpb.AppendDecorators(
-						decor.Any(func(_ decor.Statistics) string { return *info.status }),
-					),
-					mpb.BarWidth(1),
-					mpb.BarFillerOnComplete("✓"),
-				)
+	go inline.View(lines, done)
 
-				bars[address] = info
-			}
+	// wait for pipes, then for terraform itself
+	wg.Wait()
+	close(lines) // -> tells UI no more lines
+	cmd.Wait()
+	<-done // UI drained & bars closed
+}
 
-			// Serially import each resource
-			for _, ev := range alreadyExistingEvents {
-				address := ev.Diagnostic.Address
-				id := regexp.MustCompile(`(ID ")(.*)(" already exists)`).FindStringSubmatch(ev.Message)[2]
-				log.Printf("Address: %s, ID: %s\n", address, id)
-
-				// Update status to "Importing"
-				info := bars[address]
-				*info.status = "Importing"
-
-				// Run the import command
-				cmd := exec.Command("terraform", "import", address, id)
-				cmd.Stdout = log.Writer()
-				cmd.Stderr = log.Writer()
-				must(cmd.Start())
-				must(cmd.Wait())
-
-				// Mark the progress bar as done
-				gray := "\033[37m"
-				reset := "\033[0m"
-				*info.status = fmt.Sprintf("%s%s%s", gray, "Import Complete.", reset)
-				info.bar.SetCurrent(1)
-			}
-
-			// Wait for all progress bars to complete
-			p.Wait()
-		}
+func pipeToChan(wg *sync.WaitGroup, r io.Reader, out chan<- string) {
+	defer wg.Done()
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		out <- sc.Text()
 	}
+}
+
+type resourceEvent struct {
+	addr, action string
 }
