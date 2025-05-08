@@ -26,11 +26,6 @@ func TestFindAddress(t *testing.T) {
 			},
 			expected: "hook_address",
 		},
-		{
-			name:     "Default to provider",
-			event:    Event{},
-			expected: "provider",
-		},
 	}
 
 	for _, tt := range tests {

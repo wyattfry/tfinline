@@ -18,7 +18,7 @@ func View(in <-chan string, done chan<- struct{}) {
 
 	for rawEventString := range in {
 		ev := unmarshalEvent(rawEventString)
-		log.Printf("HANDLING EVENT TYPE '%s'\tRESOURCE '%s'\tMESSAGE: '%+v'\tEOM\tDIAG: %+v", ev.Type, ev.GetAddress(), ev.Message)
+		log.Printf("HANDLING EVENT TYPE '%s'\tRESOURCE '%s'\tMESSAGE: '%+v'", ev.Type, ev.GetAddress(), ev.Message)
 
 		if ev.Level == "" {
 			continue
