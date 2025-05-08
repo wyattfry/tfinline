@@ -18,13 +18,33 @@ func View(in <-chan string, done chan<- struct{}) {
 
 	for rawEventString := range in {
 		ev := unmarshalEvent(rawEventString)
-		log.Printf("HANDLING EVENT TYPE '%s'\tRESOURCE '%s'\tMESSAGE: '%+v'", ev.Type, ev.GetAddress(), ev.Message)
+		log.Printf("HANDLING EVENT TYPE '%s'\tRESOURCE '%s'", ev.Type, ev.GetAddress())
+		log.Printf(rawEventString)
 
 		if ev.Level == "" {
 			continue
 		}
-		if ev.Type == event.TypeChangeSummary && ev.Changes != nil && ev.Changes.Operation != "refresh" && ev.Changes.Operation != "plan" {
-			errors += ev.Message + "\n"
+
+		if ev.Type == event.Version {
+			fmt.Println(ev.Message)
+			continue
+		}
+
+		if ev.Type == event.InitOutput {
+			fmt.Println(ev.Message)
+			continue
+		}
+
+		if ev.Type == event.TypeChangeSummary {
+			if ev.Changes != nil {
+				switch ev.Changes.Operation {
+				case "apply", "destroy":
+					errors += ev.Message + "\n"
+				case "plan":
+					fmt.Println(ev.Message)
+				}
+			}
+			continue
 		}
 		if ev.Type == event.RefreshStart || ev.Type == event.RefreshComplete || ev.Type == event.RefreshErrored {
 			continue

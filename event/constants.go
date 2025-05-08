@@ -7,6 +7,7 @@ const (
 	ApplyErrored      EventType = "apply_errored"
 	ApplyProgress     EventType = "apply_progress"
 	ApplyStart        EventType = "apply_start"
+	InitOutput        EventType = "init_output"
 	Outputs           EventType = "outputs"
 	PlannedChange     EventType = "planned_change"
 	ResourceDrift     EventType = "resource_drift"
@@ -15,6 +16,7 @@ const (
 	RefreshStart      EventType = "refresh_start"
 	TypeChangeSummary EventType = "change_summary"
 	TypeDiagnostic    EventType = "diagnostic"
+	Version           EventType = "version"
 	// todo additional?
 	// ¯\_(ツ)_/¯
 )

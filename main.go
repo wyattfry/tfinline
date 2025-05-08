@@ -69,8 +69,6 @@ func main() {
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return
-	} else {
-		fmt.Println("Refreshing State...")
 	}
 
 	lines := make(chan string, 128)
