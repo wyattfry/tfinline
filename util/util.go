@@ -12,3 +12,18 @@ func TrimAddrPrefix(msg, addr string) string {
 	}
 	return msg
 }
+
+type TerraformObject struct {
+	Address, Id string
+}
+
+func ExtractResourceAddressAndId(line string) *TerraformObject {
+	parts := strings.Split(line, "\"")
+	if len(parts) > 2 {
+		return &TerraformObject{
+			Address: strings.TrimSpace(parts[1]),
+			Id:      strings.TrimSpace(parts[3]),
+		}
+	}
+	return nil
+}

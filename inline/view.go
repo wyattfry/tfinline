@@ -7,12 +7,14 @@ import (
 	"github.com/wyattfry/tfinline/event"
 	"github.com/wyattfry/tfinline/util"
 	"log"
+	"strings"
 	"time"
 )
 
 func View(in <-chan string, done chan<- struct{}) {
 	pool := mpb.New(mpb.WithWidth(72), mpb.WithRefreshRate(120*time.Millisecond))
 	bars := map[string]*Line{}
+	toImport := map[string]bool{}
 
 	errors := ""
 
@@ -49,11 +51,29 @@ func View(in <-chan string, done chan<- struct{}) {
 		if ev.Type == event.RefreshStart || ev.Type == event.RefreshComplete || ev.Type == event.RefreshErrored {
 			continue
 		}
+
+		if strings.Contains(ev.Message, "error: A resource with the ID") {
+			tfobj := util.ExtractResourceAddressAndId(ev.Message)
+			toImport[tfobj.Address] = true
+		}
+
 		address := ev.GetAddress()
 		if address == "" {
 			continue
 		}
 		bar, exists := bars[address]
+
+		if ev.Type == event.ImportSomething {
+			if strings.Contains(ev.Message, "Importing from ID") {
+				delete(bars, address)
+				exists = false
+			}
+
+			if strings.Contains(ev.Message, "Import successful") {
+				bars[address].MarkAsDone("Import Successful.")
+			}
+		}
+
 		msg := util.TrimAddrPrefix(ev.Message, address)
 
 		if !exists {
@@ -63,6 +83,9 @@ func View(in <-chan string, done chan<- struct{}) {
 
 		switch ev.Type {
 		case event.TypeDiagnostic:
+			if strings.Contains(ev.Message, "A resource with the ID") {
+				continue
+			}
 			errors += ev.Message + "\n"
 
 		case event.ApplyProgress, event.ApplyStart:

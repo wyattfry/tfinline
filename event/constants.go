@@ -17,6 +17,7 @@ const (
 	TypeChangeSummary EventType = "change_summary"
 	TypeDiagnostic    EventType = "diagnostic"
 	Version           EventType = "version"
+	ImportSomething   EventType = "import_something"
 	// todo additional?
 	// ¯\_(ツ)_/¯
 )
