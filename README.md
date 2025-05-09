@@ -2,7 +2,9 @@
 
 [![Go CI](https://github.com/wyattfry/tfinline/actions/workflows/test.yaml/badge.svg)](https://github.com/wyattfry/tfinline/actions/workflows/test.yaml)
 
-This is a wrapper around `terraform` to display the output of `apply` and `destroy` with in-line (instead of append) updates.
+This is a wrapper around `terraform` to display the output of `init`, `plan`, `apply` and `destroy` with in-line (instead of append) updates.
+
+It also has an 'auto-import' feature, where if it encounters a 'resource already exists' during an apply, it will try to import the resource.
 
 ## Vanilla Terraform
 
@@ -27,7 +29,7 @@ Destroy complete! Resources: 4 destroyed.
 ## With `tfinline` (in-progress view)
 
 ```sh
-$ tfinline apply
+$ tfinline apply -auto-approve
 azurerm_netapp_account.test                                       ✓ Creation complete after 15s
 azurerm_netapp_pool.test_secondary                                ✓ Creation complete after 1m8s
 azurerm_netapp_pool.test                                          ✓ Creation complete after 1m8s
