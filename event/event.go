@@ -1,5 +1,7 @@
 package event
 
+import "encoding/json"
+
 type ChangeSummary struct {
 	Add       int    `json:"add"`
 	Change    int    `json:"change"`
@@ -9,9 +11,8 @@ type ChangeSummary struct {
 }
 
 type Diagnostic struct {
-	Severity SeverityLevel `json:"severity"`
-	Address  string        `json:"address"`
-	Detail   string        `json:"detail"`
+	Address string `json:"address"`
+	Detail  string `json:"detail"`
 }
 
 type Event struct {
@@ -35,4 +36,14 @@ func (e Event) GetAddress() string {
 	}
 
 	return ""
+}
+
+func UnmarshalEvent(l string) (e *Event) {
+	var ev Event
+	if json.Unmarshal([]byte(l), &ev) != nil {
+		return &Event{
+			Message: l,
+		}
+	}
+	return &ev
 }

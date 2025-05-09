@@ -17,43 +17,15 @@ import (
 	"sync"
 )
 
-type Diagnostic struct {
-	Severity string `json:"severity"`
-	Address  string `json:"address"`
-	Detail   string `json:"detail"`
-}
-
-type ChangeSummary struct {
-	Add       int    `json:"add"`
-	Change    int    `json:"change"`
-	Import    int    `json:"import"`
-	Remove    int    `json:"remove"`
-	Operation string `json:"operation"`
-}
-
-type Event struct {
-	Level      string                 `json:"@level"`
-	Type       string                 `json:"type"`
-	Hook       map[string]interface{} `json:"hook"`
-	Message    string                 `json:"@message"`
-	Diagnostic *Diagnostic            `json:"diagnostic,omitempty"`
-	Changes    *ChangeSummary         `json:"changes,omitempty"`
-}
-
 func main() {
-	logFile := setupLogging()
+	logFile := util.SetupLogging()
 	defer logFile.Close()
 
 	log.Println("tfinline started")
 
-	var tfSubCmd string
-	var importArgs string
-
-	flag.StringVar(&tfSubCmd, "cmd", "apply", "terraform command (apply|plan|destroy|init)")
-	flag.StringVar(&importArgs, "import", "", "run terraform import (pass full import arguments)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
-		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "%s [init|plan|apply|destroy] ...\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "\nEnvironment Variables:")
 		fmt.Fprintln(os.Stderr, "  TFINLINE_LOG_FILE  Optional Path to the log file for tfinline")
 	}
@@ -64,15 +36,17 @@ func main() {
 
 	lines := make(chan string, 128)
 	processedLines := make(chan string, 128) // Intermediate channel
-	// Forward processed lines to the View
 	go func() {
 		for line := range processedLines {
-			lines <- line // Forward processed lines to View
+			lines <- line // Send processed lines to View
 		}
 	}()
 	done := make(chan struct{}) // signals view is finished
 	go inline.View(lines, done)
 
+	// If an 'apply' command produces 'resource already exists' errors,
+	// we queue up import commands to run after the apply command,
+	// and run until the command queue is empty.
 	cmdQueue := make([]exec.Cmd, 1)
 
 	args := os.Args[1:]
@@ -121,8 +95,8 @@ func processOutput(wg *sync.WaitGroup, r io.Reader, queue *[]exec.Cmd, mu *sync.
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.Contains(line, "error: A resource with the ID") {
-			tfobj := util.ExtractResourceAddressAndId(line)
-			importCmd := exec.CommandContext(ctx, "terraform", "import", "-no-color", tfobj.Address, tfobj.Id)
+			tfObject := util.ExtractResourceAddressAndId(line)
+			importCmd := exec.CommandContext(ctx, "terraform", "import", "-no-color", tfObject.Address, tfObject.Id)
 			mu.Lock()
 			*queue = append(*queue, *importCmd)
 			mu.Unlock()
@@ -130,18 +104,16 @@ func processOutput(wg *sync.WaitGroup, r io.Reader, queue *[]exec.Cmd, mu *sync.
 
 		if command.Args[1] == "import" {
 			// Import doesn't support JSON output, so we fake it
-			e := event.Event{
+			byteArrayLine, _ := json.Marshal(event.Event{
 				Message: line,
 				Diagnostic: &event.Diagnostic{
 					Address: command.Args[3],
 				},
-				Level: "info",
-				Type:  event.ImportSomething,
-			}
-			byteArrayLine, _ := json.Marshal(e)
+				Type: event.ImportSomething,
+			})
 			line = string(byteArrayLine)
 		}
 
-		processedLines <- line // Send processed line to intermediate channel
+		processedLines <- line // Send processed line to intermediate channel to be read by View()
 	}
 }

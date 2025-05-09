@@ -1,7 +1,6 @@
 package inline
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/wyattfry/tfinline/event"
@@ -11,110 +10,126 @@ import (
 	"time"
 )
 
+type handlerInput struct {
+	ev                *event.Event
+	errors            *string
+	progressContainer *mpb.Progress
+	bars              map[string]*Line
+	toImport          map[string]bool
+}
+
 func View(in <-chan string, done chan<- struct{}) {
-	pool := mpb.New(mpb.WithWidth(72), mpb.WithRefreshRate(120*time.Millisecond))
+	progressContainer := mpb.New(mpb.WithWidth(72), mpb.WithRefreshRate(120*time.Millisecond))
 	bars := map[string]*Line{}
 	toImport := map[string]bool{}
-
 	errors := ""
 
+	handlers := map[string]func(*handlerInput){
+		string(event.Version):           handleVersion,
+		string(event.InitOutput):        handleInit,
+		string(event.TypeChangeSummary): handleChangeSummary,
+		string(event.ImportSomething):   handleImport,
+		string(event.TypeDiagnostic):    handleDiagnostic,
+		string(event.ApplyStart):        handleApplyStart,
+		string(event.ApplyProgress):     handleApplyProgress,
+		string(event.ApplyErrored):      handleApplyErrored,
+		string(event.ApplyComplete):     handleApplyComplete,
+	}
+
 	for rawEventString := range in {
-		ev := unmarshalEvent(rawEventString)
+		ev := event.UnmarshalEvent(rawEventString)
 		log.Printf("HANDLING EVENT TYPE '%s'\tRESOURCE '%s'", ev.Type, ev.GetAddress())
 		log.Printf(rawEventString)
 
-		if ev.Level == "" {
-			continue
-		}
-
-		if ev.Type == event.Version {
-			fmt.Println(ev.Message)
-			continue
-		}
-
-		if ev.Type == event.InitOutput {
-			fmt.Println(ev.Message)
-			continue
-		}
-
-		if ev.Type == event.TypeChangeSummary {
-			if ev.Changes != nil {
-				switch ev.Changes.Operation {
-				case "apply", "destroy":
-					errors += ev.Message + "\n"
-				case "plan":
-					fmt.Println(ev.Message)
-				}
-			}
-			continue
-		}
-		if ev.Type == event.RefreshStart || ev.Type == event.RefreshComplete || ev.Type == event.RefreshErrored {
-			continue
-		}
-
-		if strings.Contains(ev.Message, "error: A resource with the ID") {
-			tfobj := util.ExtractResourceAddressAndId(ev.Message)
-			toImport[tfobj.Address] = true
-		}
-
-		address := ev.GetAddress()
-		if address == "" {
-			continue
-		}
-		bar, exists := bars[address]
-
-		if ev.Type == event.ImportSomething {
-			if strings.Contains(ev.Message, "Importing from ID") {
-				delete(bars, address)
-				exists = false
-			}
-
-			if strings.Contains(ev.Message, "Import successful") {
-				bars[address].MarkAsDone("Import Successful.")
-			}
-		}
-
-		msg := util.TrimAddrPrefix(ev.Message, address)
-
-		if !exists {
-			bars[address] = NewLine(pool, address, msg)
-			bars[address].MarkAsInProgress(msg)
-		}
-
-		switch ev.Type {
-		case event.TypeDiagnostic:
-			if strings.Contains(ev.Message, "A resource with the ID") {
-				continue
-			}
-			errors += ev.Message + "\n"
-
-		case event.ApplyProgress, event.ApplyStart:
-			if bar != nil && bar.Status() == StatusDone {
-				bars[address] = NewLine(pool, address, msg)
-			}
-			if bar != nil {
-				bar.MarkAsInProgress(msg)
-			}
-		case event.ApplyErrored:
-			bar.MarkAsFailed(msg)
-		case event.ApplyComplete:
-			bar.MarkAsDone(msg)
+		if handler, ok := handlers[string(ev.Type)]; ok {
+			handler(&handlerInput{
+				ev:                ev,
+				errors:            &errors,
+				progressContainer: progressContainer,
+				bars:              bars,
+				toImport:          toImport,
+			})
 		}
 	}
 
-	pool.Wait() // flush progress UI
+	progressContainer.Wait() // flush progressContainer UI
+
 	if errors != "" {
 		fmt.Println(errors)
 	}
+
 	done <- struct{}{}
 }
 
-func unmarshalEvent(l string) (e *event.Event) {
-	var ev event.Event
-	if json.Unmarshal([]byte(l), &ev) != nil {
-		return &event.Event{
-			Message: l,
+func handleVersion(input *handlerInput) {
+	fmt.Println(input.ev.Message)
+}
+
+func handleInit(input *handlerInput) {
+	fmt.Println(input.ev.Message)
+}
+
+func handleChangeSummary(input *handlerInput) {
+	if input.ev.Changes != nil {
+		switch input.ev.Changes.Operation {
+		case "apply", "destroy":
+			*input.errors += input.ev.Message + "\n"
+		case "plan":
+			fmt.Println(input.ev.Message)
 		}
 	}
-	return &ev
+}
+
+func handleImport(input *handlerInput) {
+	address := input.ev.GetAddress()
+	if strings.Contains(input.ev.Message, "Importing from ID") {
+		input.bars[address] = NewLine(input.progressContainer, address, "Importing...")
+		input.bars[address].MarkAsInProgress("Importing...")
+	}
+	if strings.Contains(input.ev.Message, "Import successful") {
+		input.bars[address].MarkAsDone("Import Successful.")
+	}
+}
+
+func handleDiagnostic(input *handlerInput) {
+	if strings.Contains(input.ev.Message, "Provider development overrides") {
+		fmt.Println(input.ev.Message)
+		return
+	}
+	if strings.Contains(input.ev.Message, "error: A resource with the ID") {
+		tfobj := util.ExtractResourceAddressAndId(input.ev.Message)
+		input.toImport[tfobj.Address] = true
+		return
+	}
+	// The 'captial E' import error doesn't have a resource address, so throw it away
+	if strings.Contains(input.ev.Message, "Error: A resource with the ID") {
+		return
+	}
+	*input.errors = fmt.Sprintf("%s\n%s\n", *input.errors, input.ev.Message)
+}
+
+func handleApplyStart(input *handlerInput) {
+	address := input.ev.GetAddress()
+	msg := util.TrimAddrPrefix(input.ev.Message, address)
+	input.bars[address] = NewLine(input.progressContainer, address, msg)
+}
+
+func handleApplyProgress(input *handlerInput) {
+	address := input.ev.GetAddress()
+	bar := input.bars[address]
+	bar.MarkAsInProgress(util.TrimAddrPrefix(input.ev.Message, address))
+}
+
+func handleApplyErrored(input *handlerInput) {
+	address := input.ev.GetAddress()
+	bar := input.bars[address]
+	msg := util.TrimAddrPrefix(input.ev.Message, address)
+	bar.MarkAsFailed(msg)
+}
+
+func handleApplyComplete(input *handlerInput) {
+	address := input.ev.GetAddress()
+	bar := input.bars[address]
+	msg := util.TrimAddrPrefix(input.ev.Message, address)
+	bar.MarkAsDone(msg)
 }

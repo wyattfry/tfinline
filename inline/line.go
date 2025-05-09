@@ -59,6 +59,9 @@ func (l *Line) MarkAsInProgress(msg string) {
 }
 
 func (l *Line) MarkAsFailed(msg string) {
+	if l.message == nil {
+		return
+	}
 	*l.message = color.RedString(msg)
 	l.currentStatus = StatusFailed
 	l.bar.SetCurrent(1)
