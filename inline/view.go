@@ -39,7 +39,7 @@ func View(in <-chan string, done chan<- struct{}) {
 	for rawEventString := range in {
 		ev := event.UnmarshalEvent(rawEventString)
 		log.Printf("HANDLING EVENT TYPE '%s'\tRESOURCE '%s'", ev.Type, ev.GetAddress())
-		log.Printf(rawEventString)
+		log.Println(rawEventString)
 
 		if handler, ok := handlers[string(ev.Type)]; ok {
 			handler(&handlerInput{
