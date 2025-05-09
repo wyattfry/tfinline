@@ -87,7 +87,10 @@ func handleImport(input *handlerInput) {
 		input.bars[address].MarkAsInProgress("Importing...")
 	}
 	if strings.Contains(input.ev.Message, "Import successful") {
-		input.bars[address].MarkAsDone("Import Successful.")
+		input.bars[address].MarkAsDone("Import Successful")
+	}
+	if strings.Contains(input.ev.Message, "error") {
+		input.bars[address].MarkAsFailed(input.ev.Message)
 	}
 }
 
